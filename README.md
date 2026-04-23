@@ -42,7 +42,7 @@ npm run dev
 
 ## Live
 
-[nocap.vercel.app](https://nocap.vercel.app)
+https://nocap-beta.vercel.app/
 
 ## Built by
 
