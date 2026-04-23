@@ -1,16 +1,49 @@
-# React + Vite
+# NoCap
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> No lies. No fake sources. No cap.
 
-Currently, two official plugins are available:
+**NoCap** is a free browser-based tool that helps students and teachers 
+verify AI-generated citations and ask questions about their documents — 
+grounded in the actual source, not hallucinated.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What it does
 
-## React Compiler
+**Mode 1 — Ask My Doc**
+Upload any PDF. Ask questions in plain language. Every answer is traced 
+back to the exact page it came from. If it's not in the doc, NoCap says so.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Mode 2 — Check Citations**
+Paste citations or upload an essay. NoCap verifies every reference against 
+200M+ real papers via Semantic Scholar and CrossRef. Fake citations are 
+flagged as ❌ Cap before you submit.
 
-## Expanding the ESLint configuration
+## Why it exists
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+40% of AI-generated citations are fabricated. 92% of students now use AI 
+for assignments. Students get penalized for academic fraud they didn't 
+intend. NoCap catches it first.
+
+## Tech stack
+
+- Vite + React (frontend)
+- RAG pipeline — pure JavaScript, zero dependencies (TF-IDF + cosine similarity)
+- Groq API — Llama 3 for generation
+- Semantic Scholar + CrossRef APIs for citation verification
+- pdfjs-dist for PDF extraction
+- 100% browser-based — no backend, no server, no data stored
+
+## Run locally
+
+git clone https://github.com/Vidushiii/nocap.git
+cd nocap
+npm install
+echo "VITE_GROQ_API_KEY=your_key_here" > .env.local
+npm run dev
+
+## Live
+
+[nocap.vercel.app](https://nocap.vercel.app)
+
+## Built by
+
+Vidushi Tomar — [vidutomar19@gmail.com](mailto:vidutomar19@gmail.com)
