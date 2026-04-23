@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env.local
+.env
+.DS_Store
+*.log
+public/*.wasm
+public/pdf.worker.js
+public/ort-wasm-threaded.worker.js

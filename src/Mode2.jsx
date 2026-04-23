@@ -1,0 +1,318 @@
+import { useState, useRef } from 'react'
+import { extractTextFromPDF } from './lib/pdfExtract'
+import { chunkText } from './lib/chunker'
+import { verifyCitation, extractCitations } from './lib/verify'
+
+function StatusBar({ msg }) {
+  if (!msg) return null
+  return (
+    <div style={{ textAlign: 'center', color: '#a78bfa', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '0.75rem 0' }}>
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#a78bfa', animation: 'pulse 1.2s ease-in-out infinite' }} />
+      {msg}
+    </div>
+  )
+}
+
+export default function Mode2() {
+  const [status, setStatus]       = useState('')
+  const [docUploaded, setDocUploaded] = useState(false)
+  const [docName, setDocName]     = useState('')
+  const [docChunks, setDocChunks] = useState([])
+  const [citInput, setCitInput]   = useState('')
+  const [citations, setCitations] = useState([])
+  const [verifying, setVerifying] = useState(false)
+  const [emptyError, setEmptyError] = useState(false)
+  const fileRef = useRef()
+
+  const citStyle = {
+    real:    { border: '#10b981', badge: '#10b981', badgeBg: 'rgba(16,185,129,0.15)',  label: '✅ Real' },
+    sketchy: { border: '#f59e0b', badge: '#f59e0b', badgeBg: 'rgba(245,158,11,0.12)', label: '⚠️ Sketchy' },
+    cap:     { border: '#ef4444', badge: '#ef4444', badgeBg: 'rgba(239,68,68,0.12)',   label: '❌ Cap' },
+  }
+
+  async function onDocUpload(file) {
+    if (!file) return
+    setStatus('Reading document...')
+    setEmptyError(false)
+    setCitInput('')
+    try {
+      const { fullText, pages } = await extractTextFromPDF(file)
+      setDocUploaded(true)
+      setDocName(file.name)
+      // Store raw text chunks for URL cross-verification (no embedding needed here)
+      setDocChunks(chunkText(pages))
+      const found = extractCitations(fullText) // null = no references section found
+      if (found && found.length > 0) {
+        setCitInput(found.join('\n'))
+        setStatus(`Found ${found.length} references in your document`)
+        setTimeout(() => setStatus(''), 3000)
+      } else {
+        // No references section — leave box empty, show error banner
+        setStatus('')
+        setEmptyError(true)
+      }
+    } catch {
+      setStatus('Could not read file. Try again.')
+    }
+  }
+
+  async function handleCheck() {
+    const lines = citInput.split('\n').filter(l => l.trim().length > 10)
+    if (!lines.length) {
+      setEmptyError(true)
+      return
+    }
+    setEmptyError(false)
+    setVerifying(true)
+    setCitations([])
+    for (let i = 0; i < lines.length; i++) {
+      setStatus(`Checking reference ${i + 1} of ${lines.length}...`)
+      const res = await verifyCitation(lines[i], docChunks.slice(0, 5))
+      setCitations(prev => [...prev, { raw: lines[i], ...res }])
+    }
+    setVerifying(false)
+    setStatus('')
+  }
+
+  const canCheck = citInput.trim().length > 0 && !verifying
+
+  const sorted = [...citations].sort((a, b) =>
+    ({ cap: 0, sketchy: 1, real: 2 })[a.status] - ({ cap: 0, sketchy: 1, real: 2 })[b.status]
+  )
+
+  const capCount     = citations.filter(c => c.status === 'cap').length
+  const sketchyCount = citations.filter(c => c.status === 'sketchy').length
+  const realCount    = citations.filter(c => c.status === 'real').length
+
+  function downloadResults() {
+    const sep  = '─────────────────────────────────────'
+    const sep2 = '─────────────────────'
+    const date = new Date().toLocaleString()
+    const lines = [
+      sep,
+      'NoCap Citation Check Report',
+      `Document: ${docName || '(no document uploaded)'}`,
+      `Date: ${date}`,
+      `Total checked: ${citations.length} | ✅ Real: ${realCount} | ⚠️ Sketchy: ${sketchyCount} | ❌ Cap: ${capCount}`,
+      sep,
+    ]
+
+    const groups = [
+      { label: '✅ REAL CITATIONS',                     status: 'real' },
+      { label: '⚠️ SKETCHY CITATIONS',                  status: 'sketchy' },
+      { label: '❌ CAP CITATIONS (may be AI-generated)', status: 'cap' },
+    ]
+
+    for (const { label, status } of groups) {
+      const group = citations.filter(c => c.status === status)
+      if (!group.length) continue
+      lines.push('', label, sep2)
+      for (const cit of group) {
+        lines.push('', cit.raw)
+        if (status === 'real') {
+          if (cit.title)   lines.push(`Matched: ${cit.title}`)
+          const meta = [cit.authors, cit.year].filter(Boolean).join(' · ')
+          if (meta) lines.push(`Authors: ${meta}`)
+          if (cit.whatThisSourceIs) lines.push(`Source: ${cit.whatThisSourceIs}`)
+        } else if (status === 'sketchy') {
+          const note = cit.reason || cit.recommendation || cit.doesItMatchClaims || 'Details do not fully match'
+          lines.push(`Note: ${note}`)
+        } else {
+          lines.push('Note: No matching paper found in any academic database.')
+        }
+      }
+    }
+
+    lines.push('', sep, 'Generated by NoCap — nocap.vercel.app', sep)
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `nocap-citation-check-${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  return (
+    <div>
+      {/* No-references error banner */}
+      {emptyError && (
+        <div style={{ background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.35)', borderRadius: 12, padding: '1rem 1.1rem', marginBottom: '1rem', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div style={{ fontSize: 13, color: '#fbbf24', lineHeight: 1.7 }}>
+            <strong style={{ display: 'block', marginBottom: 2 }}>No references found in your document.</strong>
+            Add your references to the box below to continue — one per line.
+          </div>
+        </div>
+      )}
+
+      <div style={{ background: '#0f0f1a', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 16, padding: '1.5rem', marginBottom: '1rem' }}>
+
+        {/* Upload zone */}
+        {docUploaded ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#16162a', borderRadius: 12, padding: '0.85rem 1rem', marginBottom: '1rem' }}>
+            <span style={{ fontSize: 18 }}>✅</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#f0f0f8' }}>{docName}</div>
+              <div style={{ fontSize: 11, color: '#6060a0' }}>Document loaded</div>
+            </div>
+            <button
+              onClick={() => { setDocUploaded(false); setDocName(''); setDocChunks([]); setCitInput(''); setCitations([]); setEmptyError(false) }}
+              style={{ background: 'none', border: 'none', color: '#555580', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}
+            >×</button>
+          </div>
+        ) : (
+          <div
+            onClick={() => fileRef.current.click()}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); onDocUpload(e.dataTransfer.files[0]) }}
+            style={{ border: '1.5px dashed rgba(255,255,255,0.12)', borderRadius: 12, padding: '1.5rem', textAlign: 'center', cursor: 'pointer', background: '#16162a', marginBottom: '1rem', transition: 'all 0.2s' }}
+          >
+            <div style={{ fontSize: 26, marginBottom: 8 }}>📑</div>
+            <div style={{ fontFamily: 'Syne,sans-serif', fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Drop your essay or doc here</div>
+            <div style={{ fontSize: 12, color: '#6060a0' }}>We'll auto-extract your references — .pdf or .docx</div>
+            <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
+              onChange={e => { onDocUpload(e.target.files[0]); e.target.value = '' }} />
+          </div>
+        )}
+
+        {/* References text box — always visible */}
+        <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', color: '#6060a0', textTransform: 'uppercase', marginBottom: 6 }}>
+          Add your references here (one per line)
+        </div>
+        <textarea
+          value={citInput}
+          onChange={e => { setCitInput(e.target.value); if (e.target.value.trim()) setEmptyError(false) }}
+          placeholder={`Add references — one per line:\n\nSmith, J. (2019). Deep learning. Nature, 521, 436-444.\nhttps://www.w3schools.com/css/default.asp\nVaswani et al. (2017). Attention is all you need. NeurIPS.`}
+          style={{
+            width: '100%', minHeight: 140, padding: '12px 14px',
+            background: '#16162a',
+            border: emptyError ? '1.5px solid rgba(245,158,11,0.7)' : '1px solid rgba(255,255,255,0.07)',
+            borderRadius: 12, color: '#f0f0f8', fontSize: 13, lineHeight: 1.7,
+            resize: 'vertical', outline: 'none', boxSizing: 'border-box',
+            boxShadow: emptyError ? '0 0 0 3px rgba(245,158,11,0.12), 0 0 12px rgba(245,158,11,0.08)' : 'none',
+            animation: emptyError ? 'amberPulse 2s ease-in-out infinite' : 'none',
+            transition: 'border 0.2s, box-shadow 0.2s',
+          }}
+        />
+
+        <StatusBar msg={status} />
+
+        <button
+          onClick={handleCheck}
+          disabled={!canCheck}
+          style={{
+            width: '100%', padding: 14, borderRadius: 12,
+            fontFamily: 'Syne,sans-serif', fontWeight: 700, fontSize: 15,
+            background: canCheck ? 'linear-gradient(135deg,#7c3aed,#8b5cf6)' : '#16162a',
+            color: canCheck ? '#fff' : '#6060a0',
+            boxShadow: canCheck ? '0 4px 20px rgba(124,58,237,0.3)' : 'none',
+            transition: 'all 0.2s', letterSpacing: '0.02em',
+            marginTop: '0.75rem',
+          }}
+        >
+          {verifying ? 'Checking...' : 'Check Citations — NoCap'}
+        </button>
+      </div>
+
+      {/* Results */}
+      {citations.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: '#6060a0', textTransform: 'uppercase' }}>
+              Results — {capCount} cap {capCount === 1 ? 'citation' : 'citations'} found
+            </div>
+            <button
+              onClick={downloadResults}
+              style={{ fontSize: 12, color: '#a78bfa', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: 8, padding: '5px 12px', cursor: 'pointer', fontWeight: 500 }}
+            >
+              ↓ Download Results
+            </button>
+          </div>
+
+          {sorted.map((cit, i) => {
+            const c = citStyle[cit.status]
+            const isURL = /^https?:\/\//i.test(cit.raw)
+            return (
+              <div key={i} style={{ background: '#0f0f1a', borderRadius: 12, padding: '1rem 1.25rem', marginBottom: 8, border: '1px solid rgba(255,255,255,0.07)', borderLeft: `3px solid ${c.border}` }}>
+
+                {/* Header row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+                  <div style={{ fontSize: 13, color: '#c0c0d8', lineHeight: 1.6, flex: 1, wordBreak: 'break-word' }}>{cit.raw}</div>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20, background: c.badgeBg, color: c.badge, whiteSpace: 'nowrap', flexShrink: 0 }}>{c.label}</span>
+                </div>
+
+                {/* Detail row */}
+                <div style={{ fontSize: 11, color: '#6060a0', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 8, lineHeight: 1.7 }}>
+                  {isURL ? (
+                    // ── URL result ──
+                    cit.status === 'cap' ? (
+                      <div style={{ color: '#f87171' }}>
+                        {cit.recommendation ?? 'This URL does not appear to exist.'}
+                      </div>
+                    ) : (
+                      <>
+                        {cit.whatThisSourceIs && (
+                          <div style={{ marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Source</span>
+                            <span style={{ color: '#f0f0f8' }}>{cit.whatThisSourceIs}</span>
+                          </div>
+                        )}
+                        {cit.sourceType && (
+                          <div style={{ marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Type</span>
+                            <span style={{ textTransform: 'capitalize' }}>{cit.sourceType}</span>
+                          </div>
+                        )}
+                        {cit.doesItMatchClaims && (
+                          <div style={{ marginBottom: 3 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Relevance</span>
+                            <span>{cit.doesItMatchClaims}</span>
+                          </div>
+                        )}
+                        {cit.recommendation && (
+                          <div style={{ marginBottom: 5, color: cit.status === 'sketchy' ? '#f59e0b' : '#10b981', fontStyle: 'italic' }}>
+                            {cit.recommendation}
+                          </div>
+                        )}
+                        <a href={cit.url} target="_blank" rel="noopener noreferrer"
+                          style={{ color: '#a78bfa', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          ↗ Open link
+                        </a>
+                      </>
+                    )
+                  ) : (
+                    // ── Academic citation result ──
+                    cit.status === 'cap' ? (
+                      <div style={{ color: '#f87171' }}>
+                        No matching paper found in any academic database. This citation may be AI-generated.
+                      </div>
+                    ) : cit.title ? (
+                      <>
+                        <div style={{ marginBottom: 2 }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Matched paper</span>
+                          <span style={{ color: '#f0f0f8' }}>{cit.title}</span>
+                        </div>
+                        {cit.authors && <div><span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Authors</span>{cit.authors}</div>}
+                        {cit.year    && <div><span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#555580', marginRight: 6 }}>Year</span>{cit.year}</div>}
+                        {cit.status === 'sketchy' && <div style={{ color: '#f59e0b', marginTop: 4 }}>Match confidence is low — verify this manually.</div>}
+                      </>
+                    ) : null
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        @keyframes amberPulse {
+          0%,100% { box-shadow: 0 0 0 3px rgba(245,158,11,0.12), 0 0 12px rgba(245,158,11,0.08); }
+          50%     { box-shadow: 0 0 0 4px rgba(245,158,11,0.22), 0 0 20px rgba(245,158,11,0.15); }
+        }
+      `}</style>
+    </div>
+  )
+}
